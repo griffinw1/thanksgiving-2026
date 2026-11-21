@@ -179,7 +179,7 @@ footer{margin-top:32px;font-size:12.5px;color:var(--soft);display:grid;gap:4px}
   </div>
   <div id="list" style="display:grid;gap:22px"></div>
   <div id="reset-area"><button type="button" class="reset" id="reset">Uncheck everything</button></div>
-  <p class="lede" style="font-size:13px">Checks are saved on this device only.</p>
+  <p class="lede" style="font-size:13px" id="sync-status">Checks are saved on this device only.</p>
 </section>
 
 <!-- WEEK -->
@@ -500,15 +500,16 @@ const setWho=w=>{who=w;try{localStorage.setItem("tg26_who2",w)}catch(e){}renderL
 document.getElementById("who-a").onclick=()=>setWho("all");
 document.getElementById("who-g").onclick=()=>setWho("g");
 document.getElementById("who-l").onclick=()=>setWho("l");
+const push=(group,obj)=>{try{window.TGSync&&window.TGSync.set(group,obj)}catch(e){}};
 document.getElementById("list").addEventListener("change",e=>{
-  const id=e.target.dataset.id; if(!id) return; checks[id]=e.target.checked; save(); renderList();});
+  const id=e.target.dataset.id; if(!id) return; checks[id]=e.target.checked; save(); renderList(); push("checks",{[id]:e.target.checked});});
 document.getElementById("by-aisle").onclick=()=>{mode="aisle";setSeg();renderList()};
 document.getElementById("by-recipe").onclick=()=>{mode="recipe";setSeg();renderList()};
 function setSeg(){document.getElementById("by-aisle").setAttribute("aria-pressed",mode==="aisle");document.getElementById("by-recipe").setAttribute("aria-pressed",mode==="recipe")}
 const ra=document.getElementById("reset-area");
 function resetBtn(){ra.innerHTML='<button type="button" class="reset" id="reset">Uncheck everything</button>';
   document.getElementById("reset").onclick=()=>{ra.innerHTML='<span class="confirm">Clear the checks on this list?<button type="button" class="yes" id="ry">Clear</button><button type="button" class="no" id="rn">Keep</button></span>';
-    document.getElementById("ry").onclick=()=>{currentItems().forEach(i=>delete checks[i.id]);save();renderList();resetBtn()};
+    document.getElementById("ry").onclick=()=>{const off={};currentItems().forEach(i=>{delete checks[i.id];off[i.id]=false});save();renderList();resetBtn();push("checks",off)};
     document.getElementById("rn").onclick=resetBtn;};}
 resetBtn(); renderList();
 
@@ -605,8 +606,17 @@ function renderTools(){
    <span class="name">${t[1]}<span class="note">${t[2]}</span></span>
    <span class="qty"><a href="https://www.amazon.com/s?k=${encodeURIComponent(t[1])}" target="_blank" rel="noopener">Amazon</a></span></label>`).join("")+`</div>`).join("");
 }
-document.getElementById("toollist").addEventListener("change",e=>{const id=e.target.dataset.t;if(!id)return;tchk[id]=e.target.checked;try{localStorage.setItem(TK,JSON.stringify(tchk))}catch(_){}renderTools()});
+document.getElementById("toollist").addEventListener("change",e=>{const id=e.target.dataset.t;if(!id)return;tchk[id]=e.target.checked;try{localStorage.setItem(TK,JSON.stringify(tchk))}catch(_){}renderTools();push("tools",{[id]:e.target.checked})});
 renderTools();
+
+/* shared state from the cloud (GitHub Pages copy only) */
+window.TGLocal=()=>({checks,tools:tchk});
+window.TGApply=d=>{
+  const clean=o=>{const r={};Object.keys(o||{}).forEach(k=>{if(o[k]) r[k]=true});return r};
+  checks=clean(d.checks); tchk=clean(d.tools); save();
+  try{localStorage.setItem(TK,JSON.stringify(tchk))}catch(_){}
+  renderList(); renderTools();
+};
 
 /* ---------- tabs ---------- */
 const VIEWS=["shop","week","thursday","recipes","tools"];
@@ -622,6 +632,33 @@ function route(){
 }
 window.addEventListener("hashchange",route); route();
 })();
+</script>
+<script type="module">
+/* Sync checkmarks between Griffin and Lance through Firestore (doc thanksgiving/state). */
+const status=document.getElementById("sync-status");
+const say=t=>{if(status) status.textContent=t};
+const CFG={apiKey:"AIzaSyDzDqs190VhsEhISvWAoRpf308jowhwU98",authDomain:"aspen-trip-2026.firebaseapp.com",projectId:"aspen-trip-2026",
+  storageBucket:"aspen-trip-2026.firebasestorage.app",messagingSenderId:"516453676855",appId:"1:516453676855:web:be1f56636ec65a8ef28cb2"};
+const V="https://www.gstatic.com/firebasejs/11.0.2/";
+try{
+  say("Connecting so Griffin and Lance see the same checks…");
+  const {initializeApp}=await import(V+"firebase-app.js");
+  const {getAuth,signInAnonymously}=await import(V+"firebase-auth.js");
+  const {getFirestore,doc,onSnapshot,setDoc}=await import(V+"firebase-firestore.js");
+  const app=initializeApp(CFG,"tg26");
+  await signInAnonymously(getAuth(app));
+  const ref=doc(getFirestore(app),"thanksgiving","state");
+  let first=true;
+  window.TGSync={set:(group,obj)=>setDoc(ref,{[group]:obj},{merge:true}).catch(()=>say("Couldn't save that check online. It's saved on this device; reload to retry."))};
+  onSnapshot(ref,snap=>{
+    const d=snap.data();
+    if(first && !d){ // first device ever: upload what this device already has
+      const l=window.TGLocal(); setDoc(ref,{checks:l.checks,tools:l.tools},{merge:true});
+    } else if(d){ window.TGApply(d); }
+    first=false;
+    say("Synced: checks here show up for Griffin and Lance live.");
+  },()=>say("Sync is offline. Checks are saved on this device only."));
+}catch(e){ say("Checks are saved on this device only."); }
 </script>
 
 </body>
